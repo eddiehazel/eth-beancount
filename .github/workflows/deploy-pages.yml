@@ -1,0 +1,40 @@
+# GitHub Pages Deployment Workflow
+# Automatically deploys the eth-beancount tool to GitHub Pages for preview
+
+name: Deploy to GitHub Pages
+
+on:
+  # Runs on pushes to main branch
+  push:
+    branches: ["main", "master"]
+
+  # Allows manual trigger from Actions tab
+  workflow_dispatch:
+
+# Sets permissions for GITHUB_TOKEN
+permissions:
+  contents: write
+
+# Allow only one concurrent deployment to main site
+concurrency:
+  group: "pages-main"
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: .
+          publish_branch: gh-pages
+          # Keep PR preview directories when deploying main
+          keep_files: true
+          # Only deploy to root, preserve pr-preview subdirectory
+          destination_dir: .
+          exclude_assets: '.github'

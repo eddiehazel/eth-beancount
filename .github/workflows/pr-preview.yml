@@ -1,0 +1,87 @@
+# PR Preview Deployment Workflow
+# Creates a preview deployment for each pull request
+
+name: PR Preview
+
+on:
+  pull_request:
+    branches: ["main", "master", "staging"]
+    types: [opened, synchronize, reopened, closed]
+
+# Sets permissions for GITHUB_TOKEN
+permissions:
+  contents: write
+  pull-requests: write
+
+# Allow one concurrent deployment per PR
+concurrency:
+  group: pr-preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    outputs:
+      preview_url: ${{ steps.set-url.outputs.url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set preview URL
+        id: set-url
+        run: |
+          echo "url=https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/pr-preview/pr-${{ github.event.pull_request.number }}/" >> $GITHUB_OUTPUT
+
+      - name: Deploy PR Preview
+        if: github.event.action != 'closed'
+        uses: rossjrw/pr-preview-action@v1
+        with:
+          source-dir: .
+          preview-branch: gh-pages
+          umbrella-dir: pr-preview
+          action: auto
+
+      - name: Cleanup PR Preview
+        if: github.event.action == 'closed'
+        uses: rossjrw/pr-preview-action@v1
+        with:
+          source-dir: .
+          preview-branch: gh-pages
+          umbrella-dir: pr-preview
+          action: remove
+
+  comment:
+    needs: preview
+    runs-on: ubuntu-latest
+    if: github.event.action != 'closed'
+    steps:
+      - name: Find existing comment
+        uses: peter-evans/find-comment@v3
+        id: find-comment
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: 'github-actions[bot]'
+          body-includes: '<!-- pr-preview-comment -->'
+
+      - name: Create or update PR comment
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          comment-id: ${{ steps.find-comment.outputs.comment-id }}
+          issue-number: ${{ github.event.pull_request.number }}
+          edit-mode: replace
+          body: |
+            <!-- pr-preview-comment -->
+            ## 🚀 Preview Deployment
+
+            Your PR preview is ready!
+
+            | Preview | Status |
+            |---------|--------|
+            | 🔗 **[${{ needs.preview.outputs.preview_url }}](${{ needs.preview.outputs.preview_url }})** | ✅ Deployed |
+
+            ---
+
+            - 🔄 Preview updates automatically when you push new commits
+            - 🧹 Preview will be removed when this PR is closed or merged
+
+            <sub>Last updated: ${{ github.event.pull_request.updated_at }}</sub>
