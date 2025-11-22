@@ -273,8 +273,8 @@
         }
         
         function getAccountId(address) {
-            // Use the full address (without 0x prefix) for account naming
-            return address.slice(2).toUpperCase();
+            // Use last 3 bytes (6 hex characters) for account naming
+            return address.slice(-6).toUpperCase();
         }
 
         function getEtherscanUrl(address) {
@@ -652,7 +652,7 @@
             
             const addresses = parseAddresses(document.getElementById('ethAddresses').value);
             const filename = addresses.length === 1
-                ? `ethereum-${addresses[0]}.beancount`
+                ? `ethereum-${addresses[0].slice(-6)}.beancount`
                 : `ethereum-multiple-${addresses.length}-addresses.beancount`;
             
             const blob = new Blob([output], { type: 'text/plain' });
