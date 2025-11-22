@@ -272,9 +272,14 @@
             document.getElementById('loading').style.display = show ? 'block' : 'none';
         }
         
-        function getAccountSuffix(address) {
-            // Get last 3 bytes (6 hex characters) from address
+        function getAccountId(address) {
+            // Use last 3 bytes (6 hex characters) for account naming
             return address.slice(-6).toUpperCase();
+        }
+
+        function getEtherscanUrl(address) {
+            // Generate Etherscan URL for an address
+            return `https://etherscan.io/address/${address}`;
         }
         
         function parseAddresses(text) {
@@ -427,7 +432,8 @@
             output.push(';;');
             output.push(';; Addresses included:');
             addresses.forEach(addr => {
-                output.push(`;; - ${addr} (suffix: ${getAccountSuffix(addr)})`);
+                output.push(`;; - ${addr}`);
+                output.push(`;;   Etherscan: ${getEtherscanUrl(addr)}`);
             });
             output.push('');
             
@@ -478,9 +484,10 @@
             
             // Define accounts for each user address
             addresses.forEach(addr => {
-                const suffix = getAccountSuffix(addr);
-                output.push(`1970-01-01 open Assets:Crypto:Ethereum:${suffix} ETH`);
+                const accountId = getAccountId(addr);
+                output.push(`1970-01-01 open Assets:Crypto:Ethereum:${accountId} ETH`);
                 output.push(`  description: "Ethereum wallet ${addr}"`);
+                output.push(`  etherscan: "${getEtherscanUrl(addr)}"`);
                 output.push('');
             });
             
@@ -490,7 +497,7 @@
                 const safeAccountName = sanitizeAccountName(symbol);
                 // Create token accounts for each user address that has interacted with this token
                 addresses.forEach(addr => {
-                    const suffix = getAccountSuffix(addr);
+                    const accountId = getAccountId(addr);
                     const addressData = addressTransactionMap.get(addr);
                     const hasToken = addressData && addressData.tokenTransactions.some(tx =>
                         tx.tokenSymbol === symbol &&
@@ -498,8 +505,9 @@
                     );
 
                     if (hasToken) {
-                        output.push(`1970-01-01 open Assets:Crypto:Tokens:${safeAccountName}:${suffix} ${safeSymbol}`);
-                        output.push(`  description: "Token account for ${symbol} in wallet ${suffix}"`);
+                        output.push(`1970-01-01 open Assets:Crypto:Tokens:${safeAccountName}:${accountId} ${safeSymbol}`);
+                        output.push(`  description: "Token account for ${symbol} in wallet ${addr}"`);
+                        output.push(`  etherscan: "${getEtherscanUrl(addr)}"`);
                         output.push('');
                     }
                 });
@@ -508,10 +516,11 @@
             // External accounts - now handling both ETH and tokens
             uniqueAddresses.forEach(addr => {
                 if (!addresses.some(userAddr => userAddr.toLowerCase() === addr)) {
-                    const suffix = getAccountSuffix(addr);
+                    const accountId = getAccountId(addr);
                     // External accounts don't specify currency - they can hold any token
-                    output.push(`1970-01-01 open Assets:Crypto:External:${suffix}`);
+                    output.push(`1970-01-01 open Assets:Crypto:External:${accountId}`);
                     output.push(`  description: "External address ${addr}"`);
+                    output.push(`  etherscan: "${getEtherscanUrl(addr)}"`);
                     output.push('');
                 }
             });
@@ -519,7 +528,6 @@
             // Common expense accounts
             output.push('1970-01-01 open Expenses:Crypto:NetworkFees ETH');
             output.push('1970-01-01 open Expenses:Crypto:GasFees ETH');
-            output.push('1970-01-01 open Income:Crypto:Mining ETH');
             output.push('');
             
             output.push(';; ============== TRANSACTIONS ==============');
@@ -547,31 +555,31 @@
                     if (tx.isError === '1') {
                         output.push('  ; Transaction failed - no value transferred');
                         if (isFromUser) {
-                            const fromSuffix = getAccountSuffix(tx.from);
-                            output.push(`  Assets:Crypto:Ethereum:${fromSuffix} -${gasUsed} ETH`);
+                            const fromAccountId = getAccountId(tx.from);
+                            output.push(`  Assets:Crypto:Ethereum:${fromAccountId} -${gasUsed} ETH`);
                             output.push(`  Expenses:Crypto:GasFees ${gasUsed} ETH`);
                         }
                     } else {
                         if (isFromUser && isToUser) {
                             // Transfer between user addresses
-                            const fromSuffix = getAccountSuffix(tx.from);
-                            const toSuffix = getAccountSuffix(tx.to);
-                            output.push(`  Assets:Crypto:Ethereum:${fromSuffix} -${value} ETH`);
-                            output.push(`  Assets:Crypto:Ethereum:${fromSuffix} -${gasUsed} ETH`);
-                            output.push(`  Assets:Crypto:Ethereum:${toSuffix} ${value} ETH`);
+                            const fromAccountId = getAccountId(tx.from);
+                            const toAccountId = getAccountId(tx.to);
+                            output.push(`  Assets:Crypto:Ethereum:${fromAccountId} -${value} ETH`);
+                            output.push(`  Assets:Crypto:Ethereum:${fromAccountId} -${gasUsed} ETH`);
+                            output.push(`  Assets:Crypto:Ethereum:${toAccountId} ${value} ETH`);
                             output.push(`  Expenses:Crypto:GasFees ${gasUsed} ETH`);
                         } else if (isFromUser) {
                             // Outgoing transaction
-                            const fromSuffix = getAccountSuffix(tx.from);
-                            output.push(`  Assets:Crypto:Ethereum:${fromSuffix} -${value} ETH`);
-                            output.push(`  Assets:Crypto:Ethereum:${fromSuffix} -${gasUsed} ETH`);
-                            output.push(`  Assets:Crypto:External:${getAccountSuffix(tx.to)} ${value} ETH`);
+                            const fromAccountId = getAccountId(tx.from);
+                            output.push(`  Assets:Crypto:Ethereum:${fromAccountId} -${value} ETH`);
+                            output.push(`  Assets:Crypto:Ethereum:${fromAccountId} -${gasUsed} ETH`);
+                            output.push(`  Assets:Crypto:External:${getAccountId(tx.to)} ${value} ETH`);
                             output.push(`  Expenses:Crypto:GasFees ${gasUsed} ETH`);
                         } else if (isToUser) {
                             // Incoming transaction
-                            const toSuffix = getAccountSuffix(tx.to);
-                            output.push(`  Assets:Crypto:External:${getAccountSuffix(tx.from)} -${value} ETH`);
-                            output.push(`  Assets:Crypto:Ethereum:${toSuffix} ${value} ETH`);
+                            const toAccountId = getAccountId(tx.to);
+                            output.push(`  Assets:Crypto:External:${getAccountId(tx.from)} -${value} ETH`);
+                            output.push(`  Assets:Crypto:Ethereum:${toAccountId} ${value} ETH`);
                         }
                     }
                     output.push('');
@@ -597,20 +605,20 @@
 
                     if (isFromUser && isToUser) {
                         // Transfer between user addresses
-                        const fromSuffix = getAccountSuffix(tx.from);
-                        const toSuffix = getAccountSuffix(tx.to);
-                        output.push(`  Assets:Crypto:Tokens:${safeAccountName}:${fromSuffix} -${value} ${safeSymbol}`);
-                        output.push(`  Assets:Crypto:Tokens:${safeAccountName}:${toSuffix} ${value} ${safeSymbol}`);
+                        const fromAccountId = getAccountId(tx.from);
+                        const toAccountId = getAccountId(tx.to);
+                        output.push(`  Assets:Crypto:Tokens:${safeAccountName}:${fromAccountId} -${value} ${safeSymbol}`);
+                        output.push(`  Assets:Crypto:Tokens:${safeAccountName}:${toAccountId} ${value} ${safeSymbol}`);
                     } else if (isFromUser) {
                         // Outgoing token
-                        const fromSuffix = getAccountSuffix(tx.from);
-                        output.push(`  Assets:Crypto:Tokens:${safeAccountName}:${fromSuffix} -${value} ${safeSymbol}`);
-                        output.push(`  Assets:Crypto:External:${getAccountSuffix(tx.to)} ${value} ${safeSymbol}`);
+                        const fromAccountId = getAccountId(tx.from);
+                        output.push(`  Assets:Crypto:Tokens:${safeAccountName}:${fromAccountId} -${value} ${safeSymbol}`);
+                        output.push(`  Assets:Crypto:External:${getAccountId(tx.to)} ${value} ${safeSymbol}`);
                     } else if (isToUser) {
                         // Incoming token
-                        const toSuffix = getAccountSuffix(tx.to);
-                        output.push(`  Assets:Crypto:External:${getAccountSuffix(tx.from)} -${value} ${safeSymbol}`);
-                        output.push(`  Assets:Crypto:Tokens:${safeAccountName}:${toSuffix} ${value} ${safeSymbol}`);
+                        const toAccountId = getAccountId(tx.to);
+                        output.push(`  Assets:Crypto:External:${getAccountId(tx.from)} -${value} ${safeSymbol}`);
+                        output.push(`  Assets:Crypto:Tokens:${safeAccountName}:${toAccountId} ${value} ${safeSymbol}`);
                     }
 
                     output.push('');
@@ -642,7 +650,7 @@
             }
             
             const addresses = parseAddresses(document.getElementById('ethAddresses').value);
-            const filename = addresses.length === 1 
+            const filename = addresses.length === 1
                 ? `ethereum-${addresses[0].slice(-6)}.beancount`
                 : `ethereum-multiple-${addresses.length}-addresses.beancount`;
             
