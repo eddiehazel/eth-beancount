@@ -1,0 +1,16 @@
+<div class="input-group">
+  <label for="eth-addresses">
+    Ethereum Addresses
+    <span class="label-hint">(one per line, optional nickname with address:nickname format)</span>
+  </label>
+  <textarea
+    id="eth-addresses"
+    class="address-textarea"
+    placeholder="0x742d35Cc6634C0532925a3b844Bc9e7595f7890:mywalletname.eth
+0x1234567890abcdef1234567890abcdef12345678
+0xfeEe4a6E11DB162069873644b622448489c088FB:savings"
+    value={{this.localAddresses}}
+    {{on "input" this.handleAddressesChange}}
+    {{on "keydown" this.handleKeyDown}}
+  ></textarea>
+</div>

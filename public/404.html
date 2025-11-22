@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Ethereum to Beancount Converter</title>
+  <script>
+    // Single Page App redirect for GitHub Pages
+    // Redirect 404s to the index with the path as a hash
+    const path = window.location.pathname;
+    const hash = window.location.hash;
+    const search = window.location.search;
+
+    // Only redirect if not already at root
+    if (path !== '/' && path !== '/eth-beancount/') {
+      const basePath = '/eth-beancount/';
+      const redirectPath = path.replace(basePath, '');
+      window.location.replace(basePath + '#/' + redirectPath + search + hash);
+    }
+  </script>
+</head>
+<body>
+  <noscript>
+    <p>Redirecting to the application...</p>
+    <p>If you are not redirected, <a href="/eth-beancount/">click here</a>.</p>
+  </noscript>
+</body>
+</html>

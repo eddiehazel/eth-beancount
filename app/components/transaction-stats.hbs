@@ -1,0 +1,20 @@
+{{#if @visible}}
+  <div class="stats" role="region" aria-label="Transaction statistics">
+    <div class="stat-item">
+      <span class="stat-label">Total Transactions</span>
+      <span class="stat-value">{{@total}}</span>
+    </div>
+    <div class="stat-item">
+      <span class="stat-label">ETH Transfers</span>
+      <span class="stat-value">{{@ethTransfers}}</span>
+    </div>
+    <div class="stat-item">
+      <span class="stat-label">Token Transfers</span>
+      <span class="stat-value">{{@tokenTransfers}}</span>
+    </div>
+    <div class="stat-item stat-item--warning">
+      <span class="stat-label">Failed Transactions</span>
+      <span class="stat-value">{{@failed}}</span>
+    </div>
+  </div>
+{{/if}}

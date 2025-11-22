@@ -1,0 +1,20 @@
+{{#if this.hasFailures}}
+  <div class="failed-requests" role="alert">
+    <strong class="failed-requests__title">Failed Requests</strong>
+    <div class="failed-requests__list">
+      {{#each this.failedList as |item|}}
+        <div class="failed-item">
+          <span class="failed-item__address">{{item.address}}</span>
+          <span class="failed-item__error">{{item.error}}</span>
+          <button
+            type="button"
+            class="failed-item__retry"
+            {{on "click" (fn this.handleRetry item.address)}}
+          >
+            Retry
+          </button>
+        </div>
+      {{/each}}
+    </div>
+  </div>
+{{/if}}

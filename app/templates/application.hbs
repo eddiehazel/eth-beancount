@@ -1,0 +1,65 @@
+{{page-title "Ethereum to Beancount Converter"}}
+
+<main class="app">
+  <div class="container">
+    <header class="header">
+      <h1 class="title">Ethereum to Beancount Converter</h1>
+      <p class="subtitle">
+        Convert Ethereum blockchain transactions to Beancount accounting format using Etherscan API V2
+      </p>
+    </header>
+
+    <section class="form-section">
+      <AddressInput
+        @onSubmit={{this.fetchTransactions}}
+      />
+
+      <ApiKeyInput />
+
+      <ActionButtons
+        @isLoading={{this.isLoading}}
+        @onFetch={{this.fetchTransactions}}
+        @onClear={{this.clearOutput}}
+        @onLogout={{this.logout}}
+      />
+    </section>
+
+    <StatusMessage
+      @message={{this.statusMessage}}
+      @type={{this.statusType}}
+    />
+
+    <FailedRequests
+      @failedAddresses={{this.failedAddresses}}
+      @onRetry={{this.retryAddress}}
+    />
+
+    <LoadingSpinner
+      @isLoading={{this.isLoading}}
+    />
+
+    <TransactionStats
+      @visible={{this.showStats}}
+      @total={{this.stats.total}}
+      @ethTransfers={{this.stats.eth}}
+      @tokenTransfers={{this.stats.tokens}}
+      @failed={{this.stats.failed}}
+    />
+
+    <BeancountOutput
+      @output={{this.output}}
+      @addresses={{this.fetchedAddresses}}
+      @onCopy={{this.onCopySuccess}}
+      @onDownload={{this.onDownloadSuccess}}
+    />
+  </div>
+
+  <footer class="footer">
+    <p>
+      Built with
+      <a href="https://emberjs.com" target="_blank" rel="noopener noreferrer">Ember.js</a>
+      &middot;
+      <a href="https://github.com/eddiehazel/eth-beancount" target="_blank" rel="noopener noreferrer">GitHub</a>
+    </p>
+  </footer>
+</main>

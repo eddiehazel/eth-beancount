@@ -1,0 +1,14 @@
+<div class="input-group">
+  <label for="api-key">
+    Etherscan API Key
+    <span class="label-hint">(optional, but recommended for higher limits)</span>
+  </label>
+  <input
+    type="text"
+    id="api-key"
+    class="text-input"
+    placeholder="Your Etherscan API key"
+    value={{this.localApiKey}}
+    {{on "input" this.handleApiKeyChange}}
+  />
+</div>

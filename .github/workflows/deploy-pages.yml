@@ -1,5 +1,5 @@
 # GitHub Pages Deployment Workflow
-# Automatically deploys the eth-beancount tool to GitHub Pages for preview
+# Automatically builds and deploys the Ember.js eth-beancount tool to GitHub Pages
 
 name: Deploy to GitHub Pages
 
@@ -21,20 +21,33 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Ember app
+        run: npm run build
+        env:
+          EMBER_ENV: production
+
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: .
+          publish_dir: ./dist
           publish_branch: gh-pages
           # Keep PR preview directories when deploying main
           keep_files: true
           # Only deploy to root, preserve pr-preview subdirectory
           destination_dir: .
-          exclude_assets: '.github'

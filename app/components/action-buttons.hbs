@@ -1,0 +1,30 @@
+<div class="button-group">
+  <button
+    type="button"
+    class="btn btn--primary"
+    disabled={{@isLoading}}
+    {{on "click" @onFetch}}
+  >
+    {{#if @isLoading}}
+      Fetching...
+    {{else}}
+      Fetch Transactions
+    {{/if}}
+  </button>
+  <button
+    type="button"
+    class="btn btn--secondary"
+    disabled={{@isLoading}}
+    {{on "click" @onClear}}
+  >
+    Clear
+  </button>
+  <button
+    type="button"
+    class="btn btn--danger"
+    disabled={{@isLoading}}
+    {{on "click" @onLogout}}
+  >
+    Clear Saved Data
+  </button>
+</div>

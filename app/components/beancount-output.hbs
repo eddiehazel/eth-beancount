@@ -1,0 +1,29 @@
+<div class="output-section">
+  <div class="output-header">
+    <h3 class="output-title">Beancount Output</h3>
+    <div class="output-actions">
+      <button
+        type="button"
+        class="btn btn--secondary"
+        disabled={{not @output}}
+        {{on "click" this.copyToClipboard}}
+      >
+        {{if this.copySuccess "Copied!" "Copy to Clipboard"}}
+      </button>
+      <button
+        type="button"
+        class="btn btn--secondary"
+        disabled={{not @output}}
+        {{on "click" this.downloadFile}}
+      >
+        Download .beancount
+      </button>
+    </div>
+  </div>
+  <textarea
+    class="output-textarea"
+    readonly
+    aria-label="Generated Beancount output"
+    placeholder="Generated Beancount output will appear here..."
+  >{{@output}}</textarea>
+</div>
