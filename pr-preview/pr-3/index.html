@@ -180,7 +180,12 @@
         </div>
         
         <div class="status" id="status"></div>
-        
+
+        <div class="failed-requests" id="failedRequests" style="display: none; margin-bottom: 20px; padding: 15px; background-color: #fff3cd; border: 1px solid #ffc107; border-radius: 4px;">
+            <strong>Failed Requests:</strong>
+            <div id="failedList"></div>
+        </div>
+
         <div class="loading" id="loading">
             <div class="spinner"></div>
             <p>Fetching transactions...</p>
@@ -218,6 +223,8 @@
         let allTransactions = [];
         let tokenTransactions = [];
         let addressTransactionMap = new Map(); // Map to store transactions per address
+        let failedAddresses = new Map(); // Map to store failed addresses and their errors
+        let currentApiKey = '';
         
         // Load saved data from localStorage on page load
         window.addEventListener('DOMContentLoaded', function() {
@@ -291,93 +298,184 @@
         
         async function fetchTransactions() {
             const addressesText = document.getElementById('ethAddresses').value.trim();
-            const apiKey = document.getElementById('apiKey').value.trim() || 'YourEtherscanAPIKeyToken';
-            
+            currentApiKey = document.getElementById('apiKey').value.trim() || 'YourEtherscanAPIKeyToken';
+
             if (!addressesText) {
                 showStatus('Please enter at least one Ethereum address', 'error');
                 return;
             }
-            
+
             // Parse addresses
             const addresses = parseAddresses(addressesText);
             const invalidAddresses = addresses.filter(addr => !/^0x[a-fA-F0-9]{40}$/.test(addr));
-            
+
             if (invalidAddresses.length > 0) {
                 showStatus(`Invalid Ethereum address format: ${invalidAddresses.join(', ')}`, 'error');
                 return;
             }
-            
+
             // Save to localStorage
             saveToLocalStorage();
-            
+
             showLoading(true);
             allTransactions = [];
             tokenTransactions = [];
             addressTransactionMap.clear();
-            
+            failedAddresses.clear();
+            hideFailedRequests();
+
+            await fetchAddresses(addresses);
+
+            showLoading(false);
+        }
+
+        async function fetchAddresses(addresses) {
             let totalSuccess = 0;
             let totalErrors = 0;
-            
+            let processedCount = 0;
+
             showStatus(`Fetching transactions for ${addresses.length} address(es)...`, 'info');
-            
-            // Process each address
+
+            // Process each address with staggered requests
             for (const address of addresses) {
-                try {
-                    // Add delay between requests to respect rate limits
-                    if (totalSuccess > 0) {
-                        await new Promise(resolve => setTimeout(resolve, 200)); // 200ms delay
-                    }
-                    
-                    // Initialize data structure for this address
-                    if (!addressTransactionMap.has(address)) {
-                        addressTransactionMap.set(address, {
-                            transactions: [],
-                            tokenTransactions: []
-                        });
-                    }
-                    
-                    // Fetch normal transactions using V2 API
-                    const txUrl = `https://api.etherscan.io/v2/api?chainid=1&module=account&action=txlist&address=${address}&startblock=0&endblock=99999999&sort=asc&apikey=${apiKey}`;
-                    const txResponse = await fetch(txUrl);
-                    const txData = await txResponse.json();
-                    
-                    if (txData.status === '0' && txData.message === 'NOTOK') {
-                        throw new Error(txData.result || 'API error');
-                    }
-                    
-                    const txs = txData.result || [];
-                    addressTransactionMap.get(address).transactions = txs;
-                    allTransactions = allTransactions.concat(txs);
-                    
-                    // Fetch ERC20 token transactions using V2 API
-                    const tokenUrl = `https://api.etherscan.io/v2/api?chainid=1&module=account&action=tokentx&address=${address}&startblock=0&endblock=99999999&sort=asc&apikey=${apiKey}`;
-                    const tokenResponse = await fetch(tokenUrl);
-                    const tokenData = await tokenResponse.json();
-                    
-                    if (tokenData.status === '1') {
-                        const tokens = tokenData.result || [];
-                        addressTransactionMap.get(address).tokenTransactions = tokens;
-                        tokenTransactions = tokenTransactions.concat(tokens);
-                    }
-                    
+                processedCount++;
+                showStatus(`Fetching ${processedCount}/${addresses.length}: ${address.slice(0, 10)}...`, 'info');
+
+                const result = await fetchSingleAddress(address);
+
+                if (result.success) {
                     totalSuccess++;
-                    
-                } catch (error) {
+                    // Remove from failed if it was previously failed
+                    failedAddresses.delete(address);
+                } else {
                     totalErrors++;
-                    console.error(`Error fetching transactions for ${address}:`, error);
-                    showStatus(`Error fetching ${address}: ${error.message}`, 'error');
+                    failedAddresses.set(address, result.error);
+                }
+
+                // Stagger requests - wait 500ms between each address
+                if (processedCount < addresses.length) {
+                    await new Promise(resolve => setTimeout(resolve, 500));
                 }
             }
-            
-            if (totalSuccess > 0) {
-                generateBeancountOutput(addresses);
+
+            // Update UI
+            updateFailedRequestsUI();
+
+            const allAddresses = parseAddresses(document.getElementById('ethAddresses').value);
+            if (addressTransactionMap.size > 0) {
+                generateBeancountOutput(allAddresses.filter(addr => addressTransactionMap.has(addr)));
                 updateStats();
-                showStatus(`Successfully fetched transactions for ${totalSuccess} address(es)${totalErrors > 0 ? ` (${totalErrors} failed)` : ''}`, 'success');
+                showStatus(`Successfully fetched ${totalSuccess} address(es)${totalErrors > 0 ? `, ${totalErrors} failed` : ''}`, totalErrors > 0 ? 'info' : 'success');
             } else {
                 showStatus('Failed to fetch any transactions', 'error');
             }
-            
-            showLoading(false);
+        }
+
+        async function fetchSingleAddress(address) {
+            try {
+                // Initialize data structure for this address
+                if (!addressTransactionMap.has(address)) {
+                    addressTransactionMap.set(address, {
+                        transactions: [],
+                        tokenTransactions: []
+                    });
+                }
+
+                // Fetch normal transactions using V2 API
+                const txUrl = `https://api.etherscan.io/v2/api?chainid=1&module=account&action=txlist&address=${address}&startblock=0&endblock=99999999&sort=asc&apikey=${currentApiKey}`;
+                const txResponse = await fetch(txUrl);
+
+                if (!txResponse.ok) {
+                    throw new Error(`HTTP error: ${txResponse.status}`);
+                }
+
+                const txData = await txResponse.json();
+
+                if (txData.status === '0' && txData.message === 'NOTOK') {
+                    throw new Error(txData.result || 'API error');
+                }
+
+                const txs = txData.result || [];
+                addressTransactionMap.get(address).transactions = txs;
+                allTransactions = allTransactions.concat(txs);
+
+                // Wait before second request
+                await new Promise(resolve => setTimeout(resolve, 300));
+
+                // Fetch ERC20 token transactions using V2 API
+                const tokenUrl = `https://api.etherscan.io/v2/api?chainid=1&module=account&action=tokentx&address=${address}&startblock=0&endblock=99999999&sort=asc&apikey=${currentApiKey}`;
+                const tokenResponse = await fetch(tokenUrl);
+
+                if (!tokenResponse.ok) {
+                    throw new Error(`HTTP error: ${tokenResponse.status}`);
+                }
+
+                const tokenData = await tokenResponse.json();
+
+                if (tokenData.status === '1') {
+                    const tokens = tokenData.result || [];
+                    addressTransactionMap.get(address).tokenTransactions = tokens;
+                    tokenTransactions = tokenTransactions.concat(tokens);
+                }
+
+                return { success: true };
+
+            } catch (error) {
+                console.error(`Error fetching transactions for ${address}:`, error);
+                // Remove failed address data
+                addressTransactionMap.delete(address);
+                return { success: false, error: error.message };
+            }
+        }
+
+        async function retryAddress(address) {
+            showStatus(`Retrying ${address.slice(0, 10)}...`, 'info');
+
+            const result = await fetchSingleAddress(address);
+
+            if (result.success) {
+                failedAddresses.delete(address);
+                showStatus(`Successfully fetched ${address.slice(0, 10)}...`, 'success');
+
+                // Regenerate output with all successful addresses
+                const allAddresses = parseAddresses(document.getElementById('ethAddresses').value);
+                generateBeancountOutput(allAddresses.filter(addr => addressTransactionMap.has(addr)));
+                updateStats();
+            } else {
+                failedAddresses.set(address, result.error);
+                showStatus(`Retry failed for ${address.slice(0, 10)}...: ${result.error}`, 'error');
+            }
+
+            updateFailedRequestsUI();
+        }
+
+        function updateFailedRequestsUI() {
+            const failedContainer = document.getElementById('failedRequests');
+            const failedList = document.getElementById('failedList');
+
+            if (failedAddresses.size === 0) {
+                hideFailedRequests();
+                return;
+            }
+
+            failedContainer.style.display = 'block';
+            failedList.innerHTML = '';
+
+            failedAddresses.forEach((error, address) => {
+                const item = document.createElement('div');
+                item.style.cssText = 'margin: 8px 0; padding: 8px; background: #fff; border-radius: 4px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;';
+                item.innerHTML = `
+                    <span style="font-family: monospace; font-size: 12px; word-break: break-all;">${address}</span>
+                    <span style="color: #856404; font-size: 12px;">${error}</span>
+                    <a href="javascript:void(0)" onclick="retryAddress('${address}')" style="color: #0066cc; text-decoration: underline; cursor: pointer; font-size: 12px;">Retry</a>
+                `;
+                failedList.appendChild(item);
+            });
+        }
+
+        function hideFailedRequests() {
+            document.getElementById('failedRequests').style.display = 'none';
+            document.getElementById('failedList').innerHTML = '';
         }
         
         function updateStats() {
