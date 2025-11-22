@@ -386,12 +386,36 @@
         }
         
         function sanitizeSymbol(symbol) {
-            // Check if symbol needs quoting (contains special characters or starts with number)
-            if (!symbol || symbol.match(/^[A-Z][A-Z0-9]*$/)) {
+            // Beancount 3.x currencies must be:
+            // - All uppercase letters and digits only
+            // - 1-24 characters
+            // - Must start with a letter
+            if (!symbol) return 'UNKNOWN';
+
+            // If already valid, return as-is
+            if (symbol.match(/^[A-Z][A-Z0-9]*$/)) {
                 return symbol;
             }
-            // Quote the symbol
-            return `"${symbol}"`;
+
+            // Sanitize: uppercase and remove invalid characters
+            let sanitized = symbol.toUpperCase().replace(/[^A-Z0-9]/g, '');
+
+            // Ensure it starts with a letter
+            if (sanitized.length === 0 || !sanitized.match(/^[A-Z]/)) {
+                sanitized = 'TOKEN' + sanitized;
+            }
+
+            return sanitized;
+        }
+
+        function sanitizeAccountName(name) {
+            // Account name components must start with uppercase and contain only alphanumeric
+            if (!name) return 'UNKNOWN';
+            let sanitized = name.toUpperCase().replace(/[^A-Z0-9]/g, '');
+            if (sanitized.length === 0 || !sanitized.match(/^[A-Z]/)) {
+                sanitized = 'X' + sanitized;
+            }
+            return sanitized;
         }
         
         function generateBeancountOutput(addresses) {
@@ -435,10 +459,13 @@
             
             // Token commodities
             uniqueTokens.forEach((info, symbol) => {
-                const quotedSymbol = sanitizeSymbol(symbol);
-                output.push(`1970-01-01 commodity ${quotedSymbol}`);
+                const safeSymbol = sanitizeSymbol(symbol);
+                output.push(`1970-01-01 commodity ${safeSymbol}`);
                 if (info.name) {
-                    output.push(`  name: "${info.name}"`);
+                    output.push(`  name: "${info.name.replace(/"/g, '\\"')}"`);
+                }
+                if (symbol !== safeSymbol) {
+                    output.push(`  original-symbol: "${symbol}"`);
                 }
                 output.push(`  contract: "${info.contract}"`);
                 output.push('');
@@ -459,18 +486,19 @@
             
             // Token accounts - only for user addresses
             uniqueTokens.forEach((info, symbol) => {
-                const quotedSymbol = sanitizeSymbol(symbol);
+                const safeSymbol = sanitizeSymbol(symbol);
+                const safeAccountName = sanitizeAccountName(symbol);
                 // Create token accounts for each user address that has interacted with this token
                 addresses.forEach(addr => {
                     const suffix = getAccountSuffix(addr);
                     const addressData = addressTransactionMap.get(addr);
-                    const hasToken = addressData && addressData.tokenTransactions.some(tx => 
-                        tx.tokenSymbol === symbol && 
+                    const hasToken = addressData && addressData.tokenTransactions.some(tx =>
+                        tx.tokenSymbol === symbol &&
                         (tx.from.toLowerCase() === addr.toLowerCase() || tx.to.toLowerCase() === addr.toLowerCase())
                     );
-                    
+
                     if (hasToken) {
-                        output.push(`1970-01-01 open Assets:Crypto:Tokens:${symbol}:${suffix} ${quotedSymbol}`);
+                        output.push(`1970-01-01 open Assets:Crypto:Tokens:${safeAccountName}:${suffix} ${safeSymbol}`);
                         output.push(`  description: "Token account for ${symbol} in wallet ${suffix}"`);
                         output.push('');
                     }
@@ -555,35 +583,36 @@
                 const date = new Date(parseInt(tx.timeStamp) * 1000).toISOString().split('T')[0];
                 const value = (parseInt(tx.value) / Math.pow(10, parseInt(tx.tokenDecimal))).toFixed(parseInt(tx.tokenDecimal)).replace(/\.?0+$/, '');
                 const symbol = tx.tokenSymbol;
-                const quotedSymbol = sanitizeSymbol(symbol);
-                
+                const safeSymbol = sanitizeSymbol(symbol);
+                const safeAccountName = sanitizeAccountName(symbol);
+
                 // Check if this transaction involves any of our addresses
                 const isFromUser = addresses.some(addr => addr.toLowerCase() === tx.from.toLowerCase());
                 const isToUser = addresses.some(addr => addr.toLowerCase() === tx.to.toLowerCase());
-                
+
                 if (isFromUser || isToUser) {
                     output.push(`${date} * "${symbol} Transfer"`);
                     output.push(`  txhash: "${tx.hash}"`);
-                    output.push(`  token_contract: "${tx.contractAddress}"`);
-                    
+                    output.push(`  token-contract: "${tx.contractAddress}"`);
+
                     if (isFromUser && isToUser) {
                         // Transfer between user addresses
                         const fromSuffix = getAccountSuffix(tx.from);
                         const toSuffix = getAccountSuffix(tx.to);
-                        output.push(`  Assets:Crypto:Tokens:${symbol}:${fromSuffix} -${value} ${quotedSymbol}`);
-                        output.push(`  Assets:Crypto:Tokens:${symbol}:${toSuffix} ${value} ${quotedSymbol}`);
+                        output.push(`  Assets:Crypto:Tokens:${safeAccountName}:${fromSuffix} -${value} ${safeSymbol}`);
+                        output.push(`  Assets:Crypto:Tokens:${safeAccountName}:${toSuffix} ${value} ${safeSymbol}`);
                     } else if (isFromUser) {
                         // Outgoing token
                         const fromSuffix = getAccountSuffix(tx.from);
-                        output.push(`  Assets:Crypto:Tokens:${symbol}:${fromSuffix} -${value} ${quotedSymbol}`);
-                        output.push(`  Assets:Crypto:External:${getAccountSuffix(tx.to)} ${value} ${quotedSymbol}`);
+                        output.push(`  Assets:Crypto:Tokens:${safeAccountName}:${fromSuffix} -${value} ${safeSymbol}`);
+                        output.push(`  Assets:Crypto:External:${getAccountSuffix(tx.to)} ${value} ${safeSymbol}`);
                     } else if (isToUser) {
                         // Incoming token
                         const toSuffix = getAccountSuffix(tx.to);
-                        output.push(`  Assets:Crypto:External:${getAccountSuffix(tx.from)} -${value} ${quotedSymbol}`);
-                        output.push(`  Assets:Crypto:Tokens:${symbol}:${toSuffix} ${value} ${quotedSymbol}`);
+                        output.push(`  Assets:Crypto:External:${getAccountSuffix(tx.from)} -${value} ${safeSymbol}`);
+                        output.push(`  Assets:Crypto:Tokens:${safeAccountName}:${toSuffix} ${value} ${safeSymbol}`);
                     }
-                    
+
                     output.push('');
                 }
             });
