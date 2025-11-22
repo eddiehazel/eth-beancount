@@ -422,6 +422,17 @@
             }
             return sanitized;
         }
+
+        function sanitizeUrls(text) {
+            // Remove URLs (with or without protocol) from text
+            if (!text) return text;
+            // Match URLs with protocol (http://, https://, ftp://, etc.)
+            // and URLs without protocol (www.example.com, example.com/path)
+            return text
+                .replace(/https?:\/\/[^\s"'<>]+/gi, '[ url removed ]')
+                .replace(/ftp:\/\/[^\s"'<>]+/gi, '[ url removed ]')
+                .replace(/www\.[^\s"'<>]+/gi, '[ url removed ]');
+        }
         
         function generateBeancountOutput(addresses) {
             let output = [];
@@ -466,12 +477,14 @@
             // Token commodities
             uniqueTokens.forEach((info, symbol) => {
                 const safeSymbol = sanitizeSymbol(symbol);
+                const safeName = info.name ? sanitizeUrls(info.name.replace(/"/g, '\\"')) : null;
+                const safeOriginalSymbol = sanitizeUrls(symbol);
                 output.push(`1970-01-01 commodity ${safeSymbol}`);
-                if (info.name) {
-                    output.push(`  name: "${info.name.replace(/"/g, '\\"')}"`);
+                if (safeName) {
+                    output.push(`  name: "${safeName}"`);
                 }
                 if (symbol !== safeSymbol) {
-                    output.push(`  original-symbol: "${symbol}"`);
+                    output.push(`  original-symbol: "${safeOriginalSymbol}"`);
                 }
                 output.push(`  contract: "${info.contract}"`);
                 output.push('');
@@ -506,7 +519,7 @@
 
                     if (hasToken) {
                         output.push(`1970-01-01 open Assets:Crypto:Tokens:${safeAccountName}:${accountId} ${safeSymbol}`);
-                        output.push(`  description: "Token account for ${symbol} in wallet ${addr}"`);
+                        output.push(`  description: "Token account for ${sanitizeUrls(symbol)} in wallet ${addr}"`);
                         output.push(`  etherscan: "${getEtherscanUrl(addr)}"`);
                         output.push('');
                     }
@@ -599,7 +612,7 @@
                 const isToUser = addresses.some(addr => addr.toLowerCase() === tx.to.toLowerCase());
 
                 if (isFromUser || isToUser) {
-                    output.push(`${date} * "${symbol} Transfer"`);
+                    output.push(`${date} * "${sanitizeUrls(symbol)} Transfer"`);
                     output.push(`  txhash: "${tx.hash}"`);
                     output.push(`  token-contract: "${tx.contractAddress}"`);
 
