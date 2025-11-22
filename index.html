@@ -163,8 +163,8 @@
         <p class="subtitle">Convert Ethereum transactions to Beancount format using Etherscan API V2</p>
         
         <div class="input-group">
-            <label for="ethAddresses">Ethereum Addresses (one per line):</label>
-            <textarea id="ethAddresses" placeholder="0x742d35Cc6634C0532925a3b844Bc9e7595f7890&#10;0x1234567890abcdef1234567890abcdef12345678" style="min-height: 100px; width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; box-sizing: border-box; resize: vertical;"></textarea>
+            <label for="ethAddresses">Ethereum Addresses (one per line, optional nickname with address:nickname format):</label>
+            <textarea id="ethAddresses" placeholder="0x742d35Cc6634C0532925a3b844Bc9e7595f7890:mywalletname.eth&#10;0x1234567890abcdef1234567890abcdef12345678&#10;0xfeEe4a6E11DB162069873644b622448489c088FB:savings" style="min-height: 100px; width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; box-sizing: border-box; resize: vertical;"></textarea>
         </div>
         
         <div class="input-group">
@@ -224,6 +224,7 @@
         let tokenTransactions = [];
         let addressTransactionMap = new Map(); // Map to store transactions per address
         let failedAddresses = new Map(); // Map to store failed addresses and their errors
+        let addressNicknames = new Map(); // Map to store address -> nickname
         let currentApiKey = '';
         
         // Load saved data from localStorage on page load
@@ -290,10 +291,55 @@
         }
         
         function parseAddresses(text) {
-            return text.split('\n')
+            const seen = new Set();
+            const addresses = [];
+
+            text.split('\n')
                 .map(line => line.trim())
                 .filter(line => line.length > 0)
-                .filter((value, index, self) => self.indexOf(value) === index); // Remove duplicates
+                .forEach(line => {
+                    // Parse address:nickname format
+                    const parts = line.split(':');
+                    let address, nickname;
+
+                    if (parts.length >= 2 && parts[0].startsWith('0x')) {
+                        // Format: 0xAddress:nickname
+                        address = parts[0];
+                        nickname = parts.slice(1).join(':'); // Handle nicknames with colons
+                    } else {
+                        // Just an address
+                        address = line;
+                        nickname = null;
+                    }
+
+                    // Remove duplicates
+                    if (!seen.has(address.toLowerCase())) {
+                        seen.add(address.toLowerCase());
+                        addresses.push(address);
+
+                        // Store nickname if provided
+                        if (nickname) {
+                            addressNicknames.set(address.toLowerCase(), nickname);
+                        }
+                    }
+                });
+
+            return addresses;
+        }
+
+        function getAccountName(address) {
+            // Get account name: NICKNAME:SUFFIX or just SUFFIX
+            const suffix = getAccountId(address);
+            const nickname = addressNicknames.get(address.toLowerCase());
+
+            if (nickname) {
+                // Sanitize nickname for beancount account name
+                const safeNickname = nickname.toUpperCase().replace(/[^A-Z0-9]/g, '');
+                if (safeNickname.length > 0 && safeNickname.match(/^[A-Z]/)) {
+                    return `${safeNickname}:${suffix}`;
+                }
+            }
+            return suffix;
         }
         
         async function fetchTransactions() {
@@ -322,6 +368,7 @@
             tokenTransactions = [];
             addressTransactionMap.clear();
             failedAddresses.clear();
+            addressNicknames.clear();
             hideFailedRequests();
 
             await fetchAddresses(addresses);
@@ -544,7 +591,8 @@
             output.push(';;');
             output.push(';; Addresses included:');
             addresses.forEach(addr => {
-                output.push(`;; - ${addr}`);
+                const nickname = addressNicknames.get(addr.toLowerCase());
+                output.push(`;; - ${addr}${nickname ? ' (' + nickname + ')' : ''}`);
                 output.push(`;;   Etherscan: ${getEtherscanUrl(addr)}`);
             });
             output.push('');
@@ -598,9 +646,10 @@
             
             // Define accounts for each user address
             addresses.forEach(addr => {
-                const accountId = getAccountId(addr);
-                output.push(`1970-01-01 open Assets:Crypto:Ethereum:${accountId} ETH`);
-                output.push(`  description: "Ethereum wallet ${addr}"`);
+                const accountName = getAccountName(addr);
+                const nickname = addressNicknames.get(addr.toLowerCase());
+                output.push(`1970-01-01 open Assets:Crypto:Ethereum:${accountName} ETH`);
+                output.push(`  description: "Ethereum wallet ${addr}${nickname ? ' (' + nickname + ')' : ''}"`);
                 output.push(`  etherscan: "${getEtherscanUrl(addr)}"`);
                 output.push('');
             });
@@ -608,10 +657,11 @@
             // Token accounts - only for user addresses
             uniqueTokens.forEach((info, symbol) => {
                 const safeSymbol = sanitizeSymbol(symbol);
-                const safeAccountName = sanitizeAccountName(symbol);
+                const safeTokenName = sanitizeAccountName(symbol);
                 // Create token accounts for each user address that has interacted with this token
                 addresses.forEach(addr => {
-                    const accountId = getAccountId(addr);
+                    const accountName = getAccountName(addr);
+                    const nickname = addressNicknames.get(addr.toLowerCase());
                     const addressData = addressTransactionMap.get(addr);
                     const hasToken = addressData && addressData.tokenTransactions.some(tx =>
                         tx.tokenSymbol === symbol &&
@@ -619,8 +669,8 @@
                     );
 
                     if (hasToken) {
-                        output.push(`1970-01-01 open Assets:Crypto:Tokens:${safeAccountName}:${accountId} ${safeSymbol}`);
-                        output.push(`  description: "Token account for ${sanitizeUrls(symbol)} in wallet ${addr}"`);
+                        output.push(`1970-01-01 open Assets:Crypto:Tokens:${safeTokenName}:${accountName} ${safeSymbol}`);
+                        output.push(`  description: "Token account for ${sanitizeUrls(symbol)} in wallet ${addr}${nickname ? ' (' + nickname + ')' : ''}"`);
                         output.push(`  etherscan: "${getEtherscanUrl(addr)}"`);
                         output.push('');
                     }
@@ -669,31 +719,31 @@
                     if (tx.isError === '1') {
                         output.push('  ; Transaction failed - no value transferred');
                         if (isFromUser) {
-                            const fromAccountId = getAccountId(tx.from);
-                            output.push(`  Assets:Crypto:Ethereum:${fromAccountId} -${gasUsed} ETH`);
+                            const fromAccountName = getAccountName(tx.from);
+                            output.push(`  Assets:Crypto:Ethereum:${fromAccountName} -${gasUsed} ETH`);
                             output.push(`  Expenses:Crypto:GasFees ${gasUsed} ETH`);
                         }
                     } else {
                         if (isFromUser && isToUser) {
                             // Transfer between user addresses
-                            const fromAccountId = getAccountId(tx.from);
-                            const toAccountId = getAccountId(tx.to);
-                            output.push(`  Assets:Crypto:Ethereum:${fromAccountId} -${value} ETH`);
-                            output.push(`  Assets:Crypto:Ethereum:${fromAccountId} -${gasUsed} ETH`);
-                            output.push(`  Assets:Crypto:Ethereum:${toAccountId} ${value} ETH`);
+                            const fromAccountName = getAccountName(tx.from);
+                            const toAccountName = getAccountName(tx.to);
+                            output.push(`  Assets:Crypto:Ethereum:${fromAccountName} -${value} ETH`);
+                            output.push(`  Assets:Crypto:Ethereum:${fromAccountName} -${gasUsed} ETH`);
+                            output.push(`  Assets:Crypto:Ethereum:${toAccountName} ${value} ETH`);
                             output.push(`  Expenses:Crypto:GasFees ${gasUsed} ETH`);
                         } else if (isFromUser) {
                             // Outgoing transaction
-                            const fromAccountId = getAccountId(tx.from);
-                            output.push(`  Assets:Crypto:Ethereum:${fromAccountId} -${value} ETH`);
-                            output.push(`  Assets:Crypto:Ethereum:${fromAccountId} -${gasUsed} ETH`);
+                            const fromAccountName = getAccountName(tx.from);
+                            output.push(`  Assets:Crypto:Ethereum:${fromAccountName} -${value} ETH`);
+                            output.push(`  Assets:Crypto:Ethereum:${fromAccountName} -${gasUsed} ETH`);
                             output.push(`  Assets:Crypto:External:${getAccountId(tx.to)} ${value} ETH`);
                             output.push(`  Expenses:Crypto:GasFees ${gasUsed} ETH`);
                         } else if (isToUser) {
                             // Incoming transaction
-                            const toAccountId = getAccountId(tx.to);
+                            const toAccountName = getAccountName(tx.to);
                             output.push(`  Assets:Crypto:External:${getAccountId(tx.from)} -${value} ETH`);
-                            output.push(`  Assets:Crypto:Ethereum:${toAccountId} ${value} ETH`);
+                            output.push(`  Assets:Crypto:Ethereum:${toAccountName} ${value} ETH`);
                         }
                     }
                     output.push('');
@@ -719,20 +769,20 @@
 
                     if (isFromUser && isToUser) {
                         // Transfer between user addresses
-                        const fromAccountId = getAccountId(tx.from);
-                        const toAccountId = getAccountId(tx.to);
-                        output.push(`  Assets:Crypto:Tokens:${safeAccountName}:${fromAccountId} -${value} ${safeSymbol}`);
-                        output.push(`  Assets:Crypto:Tokens:${safeAccountName}:${toAccountId} ${value} ${safeSymbol}`);
+                        const fromAccountName = getAccountName(tx.from);
+                        const toAccountName = getAccountName(tx.to);
+                        output.push(`  Assets:Crypto:Tokens:${safeAccountName}:${fromAccountName} -${value} ${safeSymbol}`);
+                        output.push(`  Assets:Crypto:Tokens:${safeAccountName}:${toAccountName} ${value} ${safeSymbol}`);
                     } else if (isFromUser) {
                         // Outgoing token
-                        const fromAccountId = getAccountId(tx.from);
-                        output.push(`  Assets:Crypto:Tokens:${safeAccountName}:${fromAccountId} -${value} ${safeSymbol}`);
+                        const fromAccountName = getAccountName(tx.from);
+                        output.push(`  Assets:Crypto:Tokens:${safeAccountName}:${fromAccountName} -${value} ${safeSymbol}`);
                         output.push(`  Assets:Crypto:External:${getAccountId(tx.to)} ${value} ${safeSymbol}`);
                     } else if (isToUser) {
                         // Incoming token
-                        const toAccountId = getAccountId(tx.to);
+                        const toAccountName = getAccountName(tx.to);
                         output.push(`  Assets:Crypto:External:${getAccountId(tx.from)} -${value} ${safeSymbol}`);
-                        output.push(`  Assets:Crypto:Tokens:${safeAccountName}:${toAccountId} ${value} ${safeSymbol}`);
+                        output.push(`  Assets:Crypto:Tokens:${safeAccountName}:${toAccountName} ${value} ${safeSymbol}`);
                     }
 
                     output.push('');
