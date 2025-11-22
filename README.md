@@ -1,57 +1,131 @@
-# eth-beancount
+# ETH Beancount
 
-A web-based tool that converts Ethereum blockchain transactions into [Beancount](https://beancount.github.io/) format for plaintext accounting.
-
-## Live Preview
-
-**Try it now:** [https://eddiehazel.github.io/eth-beancount/](https://eddiehazel.github.io/eth-beancount/)
-
-The tool is automatically deployed to GitHub Pages on every push to the main branch.
+Convert Ethereum blockchain transactions to Beancount format for plaintext double-entry accounting.
 
 ## Features
 
-- Convert Ethereum transactions to Beancount ledger format
-- Support for multiple wallet addresses
-- Handles both ETH transfers and ERC20 token transfers
-- Tracks gas fees as expenses
-- Properly handles failed transactions
-- Downloads output as `.beancount` file
-- Fully client-side - no server required
+- Fetch ETH and ERC20 token transactions from the Ethereum blockchain
+- Support for multiple wallet addresses with optional nicknames
+- Generate Beancount-compatible ledger output
+- Track gas fees as expenses
+- Handle failed transactions
+- Download output as `.beancount` files
+- Client-side only - your data never leaves your browser
+- Dark mode support
+
+## Tech Stack
+
+- **Framework**: Next.js 16 (App Router)
+- **Language**: TypeScript
+- **Styling**: Tailwind CSS v4
+- **State**: React hooks with localStorage persistence
+- **Testing**: Vitest + React Testing Library
+- **Validation**: Zod
+
+## Getting Started
+
+### Prerequisites
+
+- Node.js 18+
+- npm or yarn
+
+### Installation
+
+```bash
+# Install dependencies
+npm install
+
+# Run development server
+npm run dev
+
+# Run tests
+npm test
+
+# Build for production
+npm run build
+```
+
+Open [http://localhost:3000](http://localhost:3000) with your browser.
 
 ## Usage
 
-1. Visit the [live preview](https://eddiehazel.github.io/eth-beancount/)
-2. Enter your Etherscan API key (get one free at [etherscan.io](https://etherscan.io/apis))
-3. Add one or more Ethereum wallet addresses
-4. Click "Generate Beancount" to fetch transactions and generate output
-5. Download the generated `.beancount` file
+1. Enter your Ethereum addresses (one per line)
+2. Optionally add nicknames: `0x123...abc:MyWallet`
+3. Optionally provide an Etherscan API key (uses default if empty)
+4. Click "Fetch Transactions"
+5. Download or copy the generated Beancount output
 
-## Local Development
+## Project Structure
 
-Simply open `index.html` in a web browser - no build process required.
+```
+src/
+├── app/                    # Next.js App Router pages
+│   ├── layout.tsx          # Root layout with header/footer
+│   ├── page.tsx            # Main application page
+│   └── globals.css         # Global styles
+├── components/             # React components
+│   ├── ui/                 # Reusable UI primitives
+│   │   ├── Button.tsx
+│   │   ├── Input.tsx
+│   │   ├── Textarea.tsx
+│   │   └── StatusMessage.tsx
+│   ├── AddressInput.tsx    # Address input component
+│   ├── ApiKeyInput.tsx     # API key input component
+│   ├── BeancountOutput.tsx # Output display with copy/download
+│   ├── FailedRequests.tsx  # Failed request retry UI
+│   ├── Progress.tsx        # Fetch progress indicator
+│   └── Statistics.tsx      # Transaction statistics
+├── hooks/                  # React hooks
+│   ├── useLocalStorage.ts  # localStorage sync hook
+│   └── useTransactionFetcher.ts # Transaction fetching logic
+├── lib/                    # Core library functions
+│   ├── address.ts          # Address parsing utilities
+│   ├── beancount.ts        # Beancount output generation
+│   ├── etherscan.ts        # Etherscan API client
+│   ├── sanitize.ts         # URL/symbol sanitization
+│   └── storage.ts          # localStorage utilities
+├── types/                  # TypeScript types
+│   └── index.ts            # All type definitions
+└── test/                   # Test setup
+    └── setup.ts            # Vitest setup file
+```
 
-## Deployment
+## Testing
 
-This project uses GitHub Actions to automatically deploy to GitHub Pages. Any push to the `main` branch triggers a new deployment.
+```bash
+# Run tests in watch mode
+npm test
 
-### PR Previews
+# Run tests once
+npm run test:run
 
-Every pull request to `main`, `master`, or `staging` automatically gets a preview deployment. When you open a PR:
+# Run tests with coverage
+npm run test:coverage
+```
 
-1. A preview is deployed to `https://eddiehazel.github.io/eth-beancount/pr-preview/pr-{number}/`
-2. A comment is posted on the PR with the preview URL
-3. The preview updates automatically when you push new commits
-4. The preview is cleaned up when the PR is closed or merged
+The project includes 144+ tests covering:
 
-This allows reviewers to test changes in a live environment before merging.
+- Library functions (sanitization, address parsing, beancount generation)
+- API client functions
+- React components
+- Storage utilities
 
-### Setup for Forks
+## API
 
-To enable GitHub Pages for your fork:
-1. Go to Settings > Pages
-2. Under "Build and deployment", select "Deploy from a branch"
-3. Select the `gh-pages` branch and `/ (root)` folder
-4. The workflows will handle the rest automatically
+The application uses the [Etherscan API v2](https://docs.etherscan.io/) to fetch:
+
+- Normal ETH transactions (`txlist`)
+- ERC20 token transfers (`tokentx`)
+
+A default API key is provided, but for heavy usage, get a free key from [etherscan.io](https://etherscan.io/apis).
+
+## Security
+
+- All processing happens client-side
+- No data is sent to external servers (except Etherscan API)
+- API keys are stored only in localStorage
+- URL sanitization prevents malicious links in token names
+- Input validation for all Ethereum addresses
 
 ## License
 
