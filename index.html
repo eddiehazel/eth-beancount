@@ -163,8 +163,8 @@
         <p class="subtitle">Convert Ethereum transactions to Beancount format using Etherscan API V2</p>
         
         <div class="input-group">
-            <label for="ethAddresses">Ethereum Addresses (one per line):</label>
-            <textarea id="ethAddresses" placeholder="0x742d35Cc6634C0532925a3b844Bc9e7595f7890&#10;0x1234567890abcdef1234567890abcdef12345678" style="min-height: 100px; width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; box-sizing: border-box; resize: vertical;"></textarea>
+            <label for="ethAddresses">Ethereum Addresses (one per line, optional nickname with address:nickname format):</label>
+            <textarea id="ethAddresses" placeholder="0x742d35Cc6634C0532925a3b844Bc9e7595f7890:mywalletname.eth&#10;0x1234567890abcdef1234567890abcdef12345678&#10;0xfeEe4a6E11DB162069873644b622448489c088FB:savings" style="min-height: 100px; width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; box-sizing: border-box; resize: vertical;"></textarea>
         </div>
         
         <div class="input-group">
@@ -180,7 +180,12 @@
         </div>
         
         <div class="status" id="status"></div>
-        
+
+        <div class="failed-requests" id="failedRequests" style="display: none; margin-bottom: 20px; padding: 15px; background-color: #fff3cd; border: 1px solid #ffc107; border-radius: 4px;">
+            <strong>Failed Requests:</strong>
+            <div id="failedList"></div>
+        </div>
+
         <div class="loading" id="loading">
             <div class="spinner"></div>
             <p>Fetching transactions...</p>
@@ -218,6 +223,9 @@
         let allTransactions = [];
         let tokenTransactions = [];
         let addressTransactionMap = new Map(); // Map to store transactions per address
+        let failedAddresses = new Map(); // Map to store failed addresses and their errors
+        let addressNicknames = new Map(); // Map to store address -> nickname
+        let currentApiKey = '';
         
         // Load saved data from localStorage on page load
         window.addEventListener('DOMContentLoaded', function() {
@@ -272,107 +280,249 @@
             document.getElementById('loading').style.display = show ? 'block' : 'none';
         }
         
-        function getAccountSuffix(address) {
-            // Get last 3 bytes (6 hex characters) from address
+        function getAccountId(address) {
+            // Use last 3 bytes (6 hex characters) for account naming
             return address.slice(-6).toUpperCase();
+        }
+
+        function getEtherscanUrl(address) {
+            // Generate Etherscan URL for an address
+            return `https://etherscan.io/address/${address}`;
         }
         
         function parseAddresses(text) {
-            return text.split('\n')
+            const seen = new Set();
+            const addresses = [];
+
+            text.split('\n')
                 .map(line => line.trim())
                 .filter(line => line.length > 0)
-                .filter((value, index, self) => self.indexOf(value) === index); // Remove duplicates
+                .forEach(line => {
+                    // Parse address:nickname format
+                    const parts = line.split(':');
+                    let address, nickname;
+
+                    if (parts.length >= 2 && parts[0].startsWith('0x')) {
+                        // Format: 0xAddress:nickname
+                        address = parts[0];
+                        nickname = parts.slice(1).join(':'); // Handle nicknames with colons
+                    } else {
+                        // Just an address
+                        address = line;
+                        nickname = null;
+                    }
+
+                    // Remove duplicates
+                    if (!seen.has(address.toLowerCase())) {
+                        seen.add(address.toLowerCase());
+                        addresses.push(address);
+
+                        // Store nickname if provided
+                        if (nickname) {
+                            addressNicknames.set(address.toLowerCase(), nickname);
+                        }
+                    }
+                });
+
+            return addresses;
+        }
+
+        function getAccountName(address) {
+            // Get account name: NICKNAME:SUFFIX or just SUFFIX
+            const suffix = getAccountId(address);
+            const nickname = addressNicknames.get(address.toLowerCase());
+
+            if (nickname) {
+                // Sanitize nickname for beancount account name
+                const safeNickname = nickname.toUpperCase().replace(/[^A-Z0-9]/g, '');
+                if (safeNickname.length > 0 && safeNickname.match(/^[A-Z]/)) {
+                    return `${safeNickname}:${suffix}`;
+                }
+            }
+            return suffix;
         }
         
         async function fetchTransactions() {
             const addressesText = document.getElementById('ethAddresses').value.trim();
-            const apiKey = document.getElementById('apiKey').value.trim() || 'YourEtherscanAPIKeyToken';
-            
+            currentApiKey = document.getElementById('apiKey').value.trim() || 'YourEtherscanAPIKeyToken';
+
             if (!addressesText) {
                 showStatus('Please enter at least one Ethereum address', 'error');
                 return;
             }
-            
+
             // Parse addresses
             const addresses = parseAddresses(addressesText);
             const invalidAddresses = addresses.filter(addr => !/^0x[a-fA-F0-9]{40}$/.test(addr));
-            
+
             if (invalidAddresses.length > 0) {
                 showStatus(`Invalid Ethereum address format: ${invalidAddresses.join(', ')}`, 'error');
                 return;
             }
-            
+
             // Save to localStorage
             saveToLocalStorage();
-            
+
             showLoading(true);
             allTransactions = [];
             tokenTransactions = [];
             addressTransactionMap.clear();
-            
+            failedAddresses.clear();
+            addressNicknames.clear();
+            hideFailedRequests();
+
+            await fetchAddresses(addresses);
+
+            showLoading(false);
+        }
+
+        async function fetchAddresses(addresses) {
             let totalSuccess = 0;
             let totalErrors = 0;
-            
+            let processedCount = 0;
+
             showStatus(`Fetching transactions for ${addresses.length} address(es)...`, 'info');
-            
-            // Process each address
+
+            // Process each address with staggered requests
             for (const address of addresses) {
-                try {
-                    // Add delay between requests to respect rate limits
-                    if (totalSuccess > 0) {
-                        await new Promise(resolve => setTimeout(resolve, 200)); // 200ms delay
-                    }
-                    
-                    // Initialize data structure for this address
-                    if (!addressTransactionMap.has(address)) {
-                        addressTransactionMap.set(address, {
-                            transactions: [],
-                            tokenTransactions: []
-                        });
-                    }
-                    
-                    // Fetch normal transactions using V2 API
-                    const txUrl = `https://api.etherscan.io/v2/api?chainid=1&module=account&action=txlist&address=${address}&startblock=0&endblock=99999999&sort=asc&apikey=${apiKey}`;
-                    const txResponse = await fetch(txUrl);
-                    const txData = await txResponse.json();
-                    
-                    if (txData.status === '0' && txData.message === 'NOTOK') {
-                        throw new Error(txData.result || 'API error');
-                    }
-                    
-                    const txs = txData.result || [];
-                    addressTransactionMap.get(address).transactions = txs;
-                    allTransactions = allTransactions.concat(txs);
-                    
-                    // Fetch ERC20 token transactions using V2 API
-                    const tokenUrl = `https://api.etherscan.io/v2/api?chainid=1&module=account&action=tokentx&address=${address}&startblock=0&endblock=99999999&sort=asc&apikey=${apiKey}`;
-                    const tokenResponse = await fetch(tokenUrl);
-                    const tokenData = await tokenResponse.json();
-                    
-                    if (tokenData.status === '1') {
-                        const tokens = tokenData.result || [];
-                        addressTransactionMap.get(address).tokenTransactions = tokens;
-                        tokenTransactions = tokenTransactions.concat(tokens);
-                    }
-                    
+                processedCount++;
+                showStatus(`Fetching ${processedCount}/${addresses.length}: ${address.slice(0, 10)}...`, 'info');
+
+                const result = await fetchSingleAddress(address);
+
+                if (result.success) {
                     totalSuccess++;
-                    
-                } catch (error) {
+                    // Remove from failed if it was previously failed
+                    failedAddresses.delete(address);
+                } else {
                     totalErrors++;
-                    console.error(`Error fetching transactions for ${address}:`, error);
-                    showStatus(`Error fetching ${address}: ${error.message}`, 'error');
+                    failedAddresses.set(address, result.error);
+                }
+
+                // Stagger requests - wait 500ms between each address
+                if (processedCount < addresses.length) {
+                    await new Promise(resolve => setTimeout(resolve, 500));
                 }
             }
-            
-            if (totalSuccess > 0) {
-                generateBeancountOutput(addresses);
+
+            // Update UI
+            updateFailedRequestsUI();
+
+            const allAddresses = parseAddresses(document.getElementById('ethAddresses').value);
+            if (addressTransactionMap.size > 0) {
+                generateBeancountOutput(allAddresses.filter(addr => addressTransactionMap.has(addr)));
                 updateStats();
-                showStatus(`Successfully fetched transactions for ${totalSuccess} address(es)${totalErrors > 0 ? ` (${totalErrors} failed)` : ''}`, 'success');
+                showStatus(`Successfully fetched ${totalSuccess} address(es)${totalErrors > 0 ? `, ${totalErrors} failed` : ''}`, totalErrors > 0 ? 'info' : 'success');
             } else {
                 showStatus('Failed to fetch any transactions', 'error');
             }
-            
-            showLoading(false);
+        }
+
+        async function fetchSingleAddress(address) {
+            try {
+                // Initialize data structure for this address
+                if (!addressTransactionMap.has(address)) {
+                    addressTransactionMap.set(address, {
+                        transactions: [],
+                        tokenTransactions: []
+                    });
+                }
+
+                // Fetch normal transactions using V2 API
+                const txUrl = `https://api.etherscan.io/v2/api?chainid=1&module=account&action=txlist&address=${address}&startblock=0&endblock=99999999&sort=asc&apikey=${currentApiKey}`;
+                const txResponse = await fetch(txUrl);
+
+                if (!txResponse.ok) {
+                    throw new Error(`HTTP error: ${txResponse.status}`);
+                }
+
+                const txData = await txResponse.json();
+
+                if (txData.status === '0' && txData.message === 'NOTOK') {
+                    throw new Error(txData.result || 'API error');
+                }
+
+                const txs = txData.result || [];
+                addressTransactionMap.get(address).transactions = txs;
+                allTransactions = allTransactions.concat(txs);
+
+                // Wait before second request
+                await new Promise(resolve => setTimeout(resolve, 300));
+
+                // Fetch ERC20 token transactions using V2 API
+                const tokenUrl = `https://api.etherscan.io/v2/api?chainid=1&module=account&action=tokentx&address=${address}&startblock=0&endblock=99999999&sort=asc&apikey=${currentApiKey}`;
+                const tokenResponse = await fetch(tokenUrl);
+
+                if (!tokenResponse.ok) {
+                    throw new Error(`HTTP error: ${tokenResponse.status}`);
+                }
+
+                const tokenData = await tokenResponse.json();
+
+                if (tokenData.status === '1') {
+                    const tokens = tokenData.result || [];
+                    addressTransactionMap.get(address).tokenTransactions = tokens;
+                    tokenTransactions = tokenTransactions.concat(tokens);
+                }
+
+                return { success: true };
+
+            } catch (error) {
+                console.error(`Error fetching transactions for ${address}:`, error);
+                // Remove failed address data
+                addressTransactionMap.delete(address);
+                return { success: false, error: error.message };
+            }
+        }
+
+        async function retryAddress(address) {
+            showStatus(`Retrying ${address.slice(0, 10)}...`, 'info');
+
+            const result = await fetchSingleAddress(address);
+
+            if (result.success) {
+                failedAddresses.delete(address);
+                showStatus(`Successfully fetched ${address.slice(0, 10)}...`, 'success');
+
+                // Regenerate output with all successful addresses
+                const allAddresses = parseAddresses(document.getElementById('ethAddresses').value);
+                generateBeancountOutput(allAddresses.filter(addr => addressTransactionMap.has(addr)));
+                updateStats();
+            } else {
+                failedAddresses.set(address, result.error);
+                showStatus(`Retry failed for ${address.slice(0, 10)}...: ${result.error}`, 'error');
+            }
+
+            updateFailedRequestsUI();
+        }
+
+        function updateFailedRequestsUI() {
+            const failedContainer = document.getElementById('failedRequests');
+            const failedList = document.getElementById('failedList');
+
+            if (failedAddresses.size === 0) {
+                hideFailedRequests();
+                return;
+            }
+
+            failedContainer.style.display = 'block';
+            failedList.innerHTML = '';
+
+            failedAddresses.forEach((error, address) => {
+                const item = document.createElement('div');
+                item.style.cssText = 'margin: 8px 0; padding: 8px; background: #fff; border-radius: 4px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;';
+                item.innerHTML = `
+                    <span style="font-family: monospace; font-size: 12px; word-break: break-all;">${address}</span>
+                    <span style="color: #856404; font-size: 12px;">${error}</span>
+                    <a href="javascript:void(0)" onclick="retryAddress('${address}')" style="color: #0066cc; text-decoration: underline; cursor: pointer; font-size: 12px;">Retry</a>
+                `;
+                failedList.appendChild(item);
+            });
+        }
+
+        function hideFailedRequests() {
+            document.getElementById('failedRequests').style.display = 'none';
+            document.getElementById('failedList').innerHTML = '';
         }
         
         function updateStats() {
@@ -417,6 +567,20 @@
             }
             return sanitized;
         }
+
+        function sanitizeUrls(text) {
+            // Remove URLs (with or without protocol) from text
+            if (!text) return text;
+            // Match URLs with protocol (http://, https://, ftp://, etc.)
+            // URLs without protocol (www.example.com)
+            // Bare domain names with common TLDs (example.net, example.com)
+            // Domain names with spaces before TLD (ethnano .net)
+            return text
+                .replace(/https?:\/\/[^\s"'<>]+/gi, '[ url removed ]')
+                .replace(/ftp:\/\/[^\s"'<>]+/gi, '[ url removed ]')
+                .replace(/www\.[^\s"'<>]+/gi, '[ url removed ]')
+                .replace(/[a-z0-9][-a-z0-9]*\s*\.\s*(?:com|net|org|io|co|xyz|info|biz|me|app|dev|eth|crypto|finance|money|cash|gift|claim|reward|airdrop|token|nft|defi|swap|exchange|trade|wallet|mint)\b/gi, '[ url removed ]');
+        }
         
         function generateBeancountOutput(addresses) {
             let output = [];
@@ -427,7 +591,9 @@
             output.push(';;');
             output.push(';; Addresses included:');
             addresses.forEach(addr => {
-                output.push(`;; - ${addr} (suffix: ${getAccountSuffix(addr)})`);
+                const nickname = addressNicknames.get(addr.toLowerCase());
+                output.push(`;; - ${addr}${nickname ? ' (' + nickname + ')' : ''}`);
+                output.push(`;;   Etherscan: ${getEtherscanUrl(addr)}`);
             });
             output.push('');
             
@@ -460,12 +626,14 @@
             // Token commodities
             uniqueTokens.forEach((info, symbol) => {
                 const safeSymbol = sanitizeSymbol(symbol);
+                const safeName = info.name ? sanitizeUrls(info.name.replace(/"/g, '\\"')) : null;
+                const safeOriginalSymbol = sanitizeUrls(symbol);
                 output.push(`1970-01-01 commodity ${safeSymbol}`);
-                if (info.name) {
-                    output.push(`  name: "${info.name.replace(/"/g, '\\"')}"`);
+                if (safeName) {
+                    output.push(`  name: "${safeName}"`);
                 }
                 if (symbol !== safeSymbol) {
-                    output.push(`  original-symbol: "${symbol}"`);
+                    output.push(`  original-symbol: "${safeOriginalSymbol}"`);
                 }
                 output.push(`  contract: "${info.contract}"`);
                 output.push('');
@@ -478,19 +646,22 @@
             
             // Define accounts for each user address
             addresses.forEach(addr => {
-                const suffix = getAccountSuffix(addr);
-                output.push(`1970-01-01 open Assets:Crypto:Ethereum:${suffix} ETH`);
-                output.push(`  description: "Ethereum wallet ${addr}"`);
+                const accountName = getAccountName(addr);
+                const nickname = addressNicknames.get(addr.toLowerCase());
+                output.push(`1970-01-01 open Assets:Crypto:Ethereum:${accountName} ETH`);
+                output.push(`  description: "Ethereum wallet ${addr}${nickname ? ' (' + nickname + ')' : ''}"`);
+                output.push(`  etherscan: "${getEtherscanUrl(addr)}"`);
                 output.push('');
             });
             
             // Token accounts - only for user addresses
             uniqueTokens.forEach((info, symbol) => {
                 const safeSymbol = sanitizeSymbol(symbol);
-                const safeAccountName = sanitizeAccountName(symbol);
+                const safeTokenName = sanitizeAccountName(symbol);
                 // Create token accounts for each user address that has interacted with this token
                 addresses.forEach(addr => {
-                    const suffix = getAccountSuffix(addr);
+                    const accountName = getAccountName(addr);
+                    const nickname = addressNicknames.get(addr.toLowerCase());
                     const addressData = addressTransactionMap.get(addr);
                     const hasToken = addressData && addressData.tokenTransactions.some(tx =>
                         tx.tokenSymbol === symbol &&
@@ -498,8 +669,9 @@
                     );
 
                     if (hasToken) {
-                        output.push(`1970-01-01 open Assets:Crypto:Tokens:${safeAccountName}:${suffix} ${safeSymbol}`);
-                        output.push(`  description: "Token account for ${symbol} in wallet ${suffix}"`);
+                        output.push(`1970-01-01 open Assets:Crypto:Tokens:${safeTokenName}:${accountName} ${safeSymbol}`);
+                        output.push(`  description: "Token account for ${sanitizeUrls(symbol)} in wallet ${addr}${nickname ? ' (' + nickname + ')' : ''}"`);
+                        output.push(`  etherscan: "${getEtherscanUrl(addr)}"`);
                         output.push('');
                     }
                 });
@@ -508,10 +680,11 @@
             // External accounts - now handling both ETH and tokens
             uniqueAddresses.forEach(addr => {
                 if (!addresses.some(userAddr => userAddr.toLowerCase() === addr)) {
-                    const suffix = getAccountSuffix(addr);
+                    const accountId = getAccountId(addr);
                     // External accounts don't specify currency - they can hold any token
-                    output.push(`1970-01-01 open Assets:Crypto:External:${suffix}`);
+                    output.push(`1970-01-01 open Assets:Crypto:External:${accountId}`);
                     output.push(`  description: "External address ${addr}"`);
+                    output.push(`  etherscan: "${getEtherscanUrl(addr)}"`);
                     output.push('');
                 }
             });
@@ -519,7 +692,6 @@
             // Common expense accounts
             output.push('1970-01-01 open Expenses:Crypto:NetworkFees ETH');
             output.push('1970-01-01 open Expenses:Crypto:GasFees ETH');
-            output.push('1970-01-01 open Income:Crypto:Mining ETH');
             output.push('');
             
             output.push(';; ============== TRANSACTIONS ==============');
@@ -547,31 +719,31 @@
                     if (tx.isError === '1') {
                         output.push('  ; Transaction failed - no value transferred');
                         if (isFromUser) {
-                            const fromSuffix = getAccountSuffix(tx.from);
-                            output.push(`  Assets:Crypto:Ethereum:${fromSuffix} -${gasUsed} ETH`);
+                            const fromAccountName = getAccountName(tx.from);
+                            output.push(`  Assets:Crypto:Ethereum:${fromAccountName} -${gasUsed} ETH`);
                             output.push(`  Expenses:Crypto:GasFees ${gasUsed} ETH`);
                         }
                     } else {
                         if (isFromUser && isToUser) {
                             // Transfer between user addresses
-                            const fromSuffix = getAccountSuffix(tx.from);
-                            const toSuffix = getAccountSuffix(tx.to);
-                            output.push(`  Assets:Crypto:Ethereum:${fromSuffix} -${value} ETH`);
-                            output.push(`  Assets:Crypto:Ethereum:${fromSuffix} -${gasUsed} ETH`);
-                            output.push(`  Assets:Crypto:Ethereum:${toSuffix} ${value} ETH`);
+                            const fromAccountName = getAccountName(tx.from);
+                            const toAccountName = getAccountName(tx.to);
+                            output.push(`  Assets:Crypto:Ethereum:${fromAccountName} -${value} ETH`);
+                            output.push(`  Assets:Crypto:Ethereum:${fromAccountName} -${gasUsed} ETH`);
+                            output.push(`  Assets:Crypto:Ethereum:${toAccountName} ${value} ETH`);
                             output.push(`  Expenses:Crypto:GasFees ${gasUsed} ETH`);
                         } else if (isFromUser) {
                             // Outgoing transaction
-                            const fromSuffix = getAccountSuffix(tx.from);
-                            output.push(`  Assets:Crypto:Ethereum:${fromSuffix} -${value} ETH`);
-                            output.push(`  Assets:Crypto:Ethereum:${fromSuffix} -${gasUsed} ETH`);
-                            output.push(`  Assets:Crypto:External:${getAccountSuffix(tx.to)} ${value} ETH`);
+                            const fromAccountName = getAccountName(tx.from);
+                            output.push(`  Assets:Crypto:Ethereum:${fromAccountName} -${value} ETH`);
+                            output.push(`  Assets:Crypto:Ethereum:${fromAccountName} -${gasUsed} ETH`);
+                            output.push(`  Assets:Crypto:External:${getAccountId(tx.to)} ${value} ETH`);
                             output.push(`  Expenses:Crypto:GasFees ${gasUsed} ETH`);
                         } else if (isToUser) {
                             // Incoming transaction
-                            const toSuffix = getAccountSuffix(tx.to);
-                            output.push(`  Assets:Crypto:External:${getAccountSuffix(tx.from)} -${value} ETH`);
-                            output.push(`  Assets:Crypto:Ethereum:${toSuffix} ${value} ETH`);
+                            const toAccountName = getAccountName(tx.to);
+                            output.push(`  Assets:Crypto:External:${getAccountId(tx.from)} -${value} ETH`);
+                            output.push(`  Assets:Crypto:Ethereum:${toAccountName} ${value} ETH`);
                         }
                     }
                     output.push('');
@@ -591,26 +763,26 @@
                 const isToUser = addresses.some(addr => addr.toLowerCase() === tx.to.toLowerCase());
 
                 if (isFromUser || isToUser) {
-                    output.push(`${date} * "${symbol} Transfer"`);
+                    output.push(`${date} * "${sanitizeUrls(symbol)} Transfer"`);
                     output.push(`  txhash: "${tx.hash}"`);
                     output.push(`  token-contract: "${tx.contractAddress}"`);
 
                     if (isFromUser && isToUser) {
                         // Transfer between user addresses
-                        const fromSuffix = getAccountSuffix(tx.from);
-                        const toSuffix = getAccountSuffix(tx.to);
-                        output.push(`  Assets:Crypto:Tokens:${safeAccountName}:${fromSuffix} -${value} ${safeSymbol}`);
-                        output.push(`  Assets:Crypto:Tokens:${safeAccountName}:${toSuffix} ${value} ${safeSymbol}`);
+                        const fromAccountName = getAccountName(tx.from);
+                        const toAccountName = getAccountName(tx.to);
+                        output.push(`  Assets:Crypto:Tokens:${safeAccountName}:${fromAccountName} -${value} ${safeSymbol}`);
+                        output.push(`  Assets:Crypto:Tokens:${safeAccountName}:${toAccountName} ${value} ${safeSymbol}`);
                     } else if (isFromUser) {
                         // Outgoing token
-                        const fromSuffix = getAccountSuffix(tx.from);
-                        output.push(`  Assets:Crypto:Tokens:${safeAccountName}:${fromSuffix} -${value} ${safeSymbol}`);
-                        output.push(`  Assets:Crypto:External:${getAccountSuffix(tx.to)} ${value} ${safeSymbol}`);
+                        const fromAccountName = getAccountName(tx.from);
+                        output.push(`  Assets:Crypto:Tokens:${safeAccountName}:${fromAccountName} -${value} ${safeSymbol}`);
+                        output.push(`  Assets:Crypto:External:${getAccountId(tx.to)} ${value} ${safeSymbol}`);
                     } else if (isToUser) {
                         // Incoming token
-                        const toSuffix = getAccountSuffix(tx.to);
-                        output.push(`  Assets:Crypto:External:${getAccountSuffix(tx.from)} -${value} ${safeSymbol}`);
-                        output.push(`  Assets:Crypto:Tokens:${safeAccountName}:${toSuffix} ${value} ${safeSymbol}`);
+                        const toAccountName = getAccountName(tx.to);
+                        output.push(`  Assets:Crypto:External:${getAccountId(tx.from)} -${value} ${safeSymbol}`);
+                        output.push(`  Assets:Crypto:Tokens:${safeAccountName}:${toAccountName} ${value} ${safeSymbol}`);
                     }
 
                     output.push('');
@@ -642,7 +814,7 @@
             }
             
             const addresses = parseAddresses(document.getElementById('ethAddresses').value);
-            const filename = addresses.length === 1 
+            const filename = addresses.length === 1
                 ? `ethereum-${addresses[0].slice(-6)}.beancount`
                 : `ethereum-multiple-${addresses.length}-addresses.beancount`;
             
