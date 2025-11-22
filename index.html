@@ -427,11 +427,14 @@
             // Remove URLs (with or without protocol) from text
             if (!text) return text;
             // Match URLs with protocol (http://, https://, ftp://, etc.)
-            // and URLs without protocol (www.example.com, example.com/path)
+            // URLs without protocol (www.example.com)
+            // Bare domain names with common TLDs (example.net, example.com)
+            // Domain names with spaces before TLD (ethnano .net)
             return text
                 .replace(/https?:\/\/[^\s"'<>]+/gi, '[ url removed ]')
                 .replace(/ftp:\/\/[^\s"'<>]+/gi, '[ url removed ]')
-                .replace(/www\.[^\s"'<>]+/gi, '[ url removed ]');
+                .replace(/www\.[^\s"'<>]+/gi, '[ url removed ]')
+                .replace(/[a-z0-9][-a-z0-9]*\s*\.\s*(?:com|net|org|io|co|xyz|info|biz|me|app|dev|eth|crypto|finance|money|cash|gift|claim|reward|airdrop|token|nft|defi|swap|exchange|trade|wallet|mint)\b/gi, '[ url removed ]');
         }
         
         function generateBeancountOutput(addresses) {
